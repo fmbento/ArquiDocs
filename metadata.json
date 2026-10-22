@@ -1,0 +1,8 @@
+{
+  "name": "ArquiDocs - Gestão e Rastreamento de Processos",
+  "description": "Sistema de gestão e rastreamento de requisições de processos ao arquivo, registo de levantamentos, devoluções, consultas, pesquisas, digitalizações, operadores e notificações automáticas.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

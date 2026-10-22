@@ -1,0 +1,35 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  color-scheme: light;
+}
+
+:root.dark, html.dark {
+  color-scheme: dark;
+}
+
+html, body {
+  color: #0f172a;
+  background-color: #f8fafc;
+  transition-property: background-color, border-color, color, fill, stroke;
+  transition-duration: 150ms;
+}
+
+html.dark, html.dark body {
+  color: #f8fafc;
+  background-color: #0b0f17;
+}
+
+/* Garante contraste nos controlos de formulário em qualquer modo */
+input, select, textarea {
+  color-scheme: light;
+}
+
+html.dark input, 
+html.dark select, 
+html.dark textarea {
+  color-scheme: dark;
+}
+
