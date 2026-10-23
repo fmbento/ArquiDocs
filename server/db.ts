@@ -1,6 +1,8 @@
+import 'dotenv/config';
 import fs from 'fs';
 import path from 'path';
 import initSqlJs, { Database } from 'sql.js';
+import { createClient, Client as LibSqlClient } from '@libsql/client';
 import {
   RequisicaoProcesso,
   Operador,
@@ -11,13 +13,34 @@ import {
 } from '../src/types/index.ts';
 import { getMesExtenso, getDataHojeISO } from '../src/utils/requisicoes.ts';
 
+let tursoClient: LibSqlClient | null = null;
+
+export function isTursoActive(): boolean {
+  return Boolean(process.env.TURSO_DATABASE_URL || process.env.TURSO_URL);
+}
+
+export function getTursoClient(): LibSqlClient | null {
+  if (!isTursoActive()) return null;
+  if (!tursoClient) {
+    const url = (process.env.TURSO_DATABASE_URL || process.env.TURSO_URL || '').trim();
+    const authToken = process.env.TURSO_AUTH_TOKEN?.trim();
+    tursoClient = createClient({ url, authToken });
+    console.log(`[ArquiDocs] Ligado à base de dados Turso Cloud: ${url.replace(/:\/\/([^@]+@)?/, '://')}`);
+  }
+  return tursoClient;
+}
+
 const isVercel = Boolean(process.env.VERCEL);
 const DATA_DIR = isVercel ? '/tmp/data' : path.resolve(process.cwd(), 'data');
 const DB_PATH = path.join(DATA_DIR, 'arquivo.sqlite');
 
 let db: Database | null = null;
 
-export async function getDb(): Promise<Database> {
+export async function getDb(): Promise<Database | null> {
+  if (isTursoActive()) {
+    getTursoClient();
+    return null;
+  }
   if (db) return db;
 
   try {
@@ -62,7 +85,7 @@ export async function getDb(): Promise<Database> {
 }
 
 export function persistDb() {
-  if (!db) return;
+  if (isTursoActive() || !db) return;
   try {
     const data = db.export();
     const buffer = Buffer.from(data);
@@ -611,13 +634,43 @@ function parseRequisicaoRow(row: any[]): RequisicaoProcesso {
   };
 }
 
+function mapTursoRequisicao(row: any): RequisicaoProcesso {
+  return {
+    id: String(row.id),
+    numeroRequisicao: String(row.numero_requisicao),
+    servicoId: String(row.servico_id),
+    servicoNome: String(row.servico_nome),
+    referenciaDocumento: String(row.referencia_documento),
+    documentacaoDenominacao: String(row.documentacao_denominacao),
+    nomeQuemSolicita: String(row.nome_quem_solicita),
+    nomeQuemLevanta: row.nome_quem_levanta ? String(row.nome_quem_levanta) : undefined,
+    emailSolicitante: row.email_solicitante ? String(row.email_solicitante) : undefined,
+    dataLevantamento: row.data_levantamento ? String(row.data_levantamento) : undefined,
+    horaLevantamento: row.hora_levantamento ? String(row.hora_levantamento) : undefined,
+    dataDevolucao: row.data_devolucao ? String(row.data_devolucao) : undefined,
+    nomeQuemDevolveu: row.nome_quem_devolveu ? String(row.nome_quem_devolveu) : undefined,
+    dataConsulta: row.data_consulta ? String(row.data_consulta) : undefined,
+    dataPesquisa: row.data_pesquisa ? String(row.data_pesquisa) : undefined,
+    numeroDigitalizacoes: row.numero_digitalizacoes !== null && row.numero_digitalizacoes !== undefined ? Number(row.numero_digitalizacoes) : undefined,
+    atendimentoFase: row.atendimento_fase ? (row.atendimento_fase as any) : undefined,
+    observacoes: row.observacoes ? String(row.observacoes) : undefined,
+    status: String(row.status) as StatusPedido,
+    operadorResponsavelId: String(row.operador_responsavel_id),
+    operadorResponsavelNome: String(row.operador_responsavel_nome),
+    dataCriacao: String(row.data_criacao),
+    dataAtualizacao: String(row.data_atualizacao),
+    mesReferencia: String(row.mes_referencia),
+    historico: row.historico_json ? (typeof row.historico_json === 'string' ? JSON.parse(row.historico_json) : row.historico_json) : []
+  };
+}
+
 export async function listarRequisicoes(filtros?: {
   status?: string;
   servicoId?: string;
   busca?: string;
   mes?: string;
 }): Promise<RequisicaoProcesso[]> {
-  const database = await getDb();
+  const turso = getTursoClient();
   let query = 'SELECT * FROM requisicoes WHERE 1=1';
   const params: any[] = [];
 
@@ -641,6 +694,12 @@ export async function listarRequisicoes(filtros?: {
 
   query += ' ORDER BY data_criacao DESC';
 
+  if (turso) {
+    const res = await turso.execute({ sql: query, args: params });
+    return res.rows.map(mapTursoRequisicao);
+  }
+
+  const database = (await getDb())!;
   const stmt = database.prepare(query);
   stmt.bind(params);
   const rows: RequisicaoProcesso[] = [];
@@ -652,7 +711,14 @@ export async function listarRequisicoes(filtros?: {
 }
 
 export async function obterRequisicaoPorId(id: string): Promise<RequisicaoProcesso | null> {
-  const database = await getDb();
+  const turso = getTursoClient();
+  if (turso) {
+    const res = await turso.execute({ sql: 'SELECT * FROM requisicoes WHERE id = ?', args: [id] });
+    if (!res.rows.length) return null;
+    return mapTursoRequisicao(res.rows[0]);
+  }
+
+  const database = (await getDb())!;
   const stmt = database.prepare('SELECT * FROM requisicoes WHERE id = ?');
   stmt.bind([id]);
   if (stmt.step()) {
@@ -665,13 +731,60 @@ export async function obterRequisicaoPorId(id: string): Promise<RequisicaoProces
 }
 
 export async function salvarRequisicao(req: RequisicaoProcesso): Promise<void> {
-  const database = await getDb();
+  const turso = getTursoClient();
+  if (turso) {
+    await turso.execute({
+      sql: `INSERT OR REPLACE INTO requisicoes (
+        id, numero_requisicao, servico_id, servico_nome, referencia_documento,
+        documentacao_denominacao, nome_quem_solicita, nome_quem_levanta, email_solicitante,
+        data_levantamento, hora_levantamento, data_devolucao, nome_quem_devolveu,
+        data_consulta, data_pesquisa, numero_digitalizacoes, atendimento_fase,
+        observacoes, status, operador_responsavel_id, operador_responsavel_nome,
+        data_criacao, data_atualizacao, mes_referencia, historico_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      args: [
+        req.id,
+        req.numeroRequisicao,
+        req.servicoId,
+        req.servicoNome,
+        req.referenciaDocumento,
+        req.documentacaoDenominacao,
+        req.nomeQuemSolicita,
+        req.nomeQuemLevanta || null,
+        req.emailSolicitante || null,
+        req.dataLevantamento || null,
+        req.horaLevantamento || null,
+        req.dataDevolucao || null,
+        req.nomeQuemDevolveu || null,
+        req.dataConsulta || null,
+        req.dataPesquisa || null,
+        req.numeroDigitalizacoes !== undefined ? req.numeroDigitalizacoes : null,
+        req.atendimentoFase || null,
+        req.observacoes || null,
+        req.status,
+        req.operadorResponsavelId,
+        req.operadorResponsavelNome,
+        req.dataCriacao,
+        req.dataAtualizacao,
+        req.mesReferencia,
+        JSON.stringify(req.historico || [])
+      ]
+    });
+    return;
+  }
+
+  const database = (await getDb())!;
   salvarRequisicaoSync(database, req);
   persistDb();
 }
 
 export async function apagarRequisicao(id: string): Promise<boolean> {
-  const database = await getDb();
+  const turso = getTursoClient();
+  if (turso) {
+    await turso.execute({ sql: 'DELETE FROM requisicoes WHERE id = ?', args: [id] });
+    return true;
+  }
+  const database = (await getDb())!;
   database.run('DELETE FROM requisicoes WHERE id = ?', [id]);
   persistDb();
   return true;
@@ -679,7 +792,21 @@ export async function apagarRequisicao(id: string): Promise<boolean> {
 
 // OPERADORES
 export async function listarOperadores(): Promise<Operador[]> {
-  const database = await getDb();
+  const turso = getTursoClient();
+  if (turso) {
+    const res = await turso.execute('SELECT id, nome, email, cargo, numero_funcionario, ativo, criado_em FROM operadores ORDER BY nome ASC');
+    return res.rows.map(row => ({
+      id: String(row.id),
+      nome: String(row.nome),
+      email: String(row.email),
+      cargo: String(row.cargo),
+      numeroFuncionario: String(row.numero_funcionario),
+      ativo: Boolean(row.ativo),
+      criadoEm: String(row.criado_em)
+    }));
+  }
+
+  const database = (await getDb())!;
   const res = database.exec('SELECT id, nome, email, cargo, numero_funcionario, ativo, criado_em FROM operadores ORDER BY nome ASC');
   if (!res.length) return [];
   return res[0].values.map(row => ({
@@ -694,7 +821,16 @@ export async function listarOperadores(): Promise<Operador[]> {
 }
 
 export async function salvarOperador(op: Operador): Promise<void> {
-  const database = await getDb();
+  const turso = getTursoClient();
+  if (turso) {
+    await turso.execute({
+      sql: 'INSERT OR REPLACE INTO operadores (id, nome, email, cargo, numero_funcionario, ativo, criado_em) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      args: [op.id, op.nome, op.email, op.cargo, op.numeroFuncionario, op.ativo ? 1 : 0, op.criadoEm]
+    });
+    return;
+  }
+
+  const database = (await getDb())!;
   database.run(
     'INSERT OR REPLACE INTO operadores (id, nome, email, cargo, numero_funcionario, ativo, criado_em) VALUES (?, ?, ?, ?, ?, ?, ?)',
     [op.id, op.nome, op.email, op.cargo, op.numeroFuncionario, op.ativo ? 1 : 0, op.criadoEm]
@@ -703,7 +839,12 @@ export async function salvarOperador(op: Operador): Promise<void> {
 }
 
 export async function apagarOperador(id: string): Promise<boolean> {
-  const database = await getDb();
+  const turso = getTursoClient();
+  if (turso) {
+    await turso.execute({ sql: 'DELETE FROM operadores WHERE id = ?', args: [id] });
+    return true;
+  }
+  const database = (await getDb())!;
   database.run('DELETE FROM operadores WHERE id = ?', [id]);
   persistDb();
   return true;
@@ -711,7 +852,20 @@ export async function apagarOperador(id: string): Promise<boolean> {
 
 // SERVIÇOS
 export async function listarServicos(): Promise<ServicoSolicitante[]> {
-  const database = await getDb();
+  const turso = getTursoClient();
+  if (turso) {
+    const res = await turso.execute('SELECT id, codigo, nome, departamento, email_notificacao, responsavel_padrao FROM servicos ORDER BY nome ASC');
+    return res.rows.map(row => ({
+      id: String(row.id),
+      codigo: String(row.codigo),
+      nome: String(row.nome),
+      departamento: String(row.departamento),
+      emailNotificacao: String(row.email_notificacao),
+      responsavelPadrao: row.responsavel_padrao ? String(row.responsavel_padrao) : undefined
+    }));
+  }
+
+  const database = (await getDb())!;
   const res = database.exec('SELECT id, codigo, nome, departamento, email_notificacao, responsavel_padrao FROM servicos ORDER BY nome ASC');
   if (!res.length) return [];
   return res[0].values.map(row => ({
@@ -725,7 +879,16 @@ export async function listarServicos(): Promise<ServicoSolicitante[]> {
 }
 
 export async function salvarServico(s: ServicoSolicitante): Promise<void> {
-  const database = await getDb();
+  const turso = getTursoClient();
+  if (turso) {
+    await turso.execute({
+      sql: 'INSERT OR REPLACE INTO servicos (id, codigo, nome, departamento, email_notificacao, responsavel_padrao) VALUES (?, ?, ?, ?, ?, ?)',
+      args: [s.id, s.codigo, s.nome, s.departamento, s.emailNotificacao, s.responsavelPadrao || '']
+    });
+    return;
+  }
+
+  const database = (await getDb())!;
   database.run(
     'INSERT OR REPLACE INTO servicos (id, codigo, nome, departamento, email_notificacao, responsavel_padrao) VALUES (?, ?, ?, ?, ?, ?)',
     [s.id, s.codigo, s.nome, s.departamento, s.emailNotificacao, s.responsavelPadrao || '']
@@ -735,7 +898,28 @@ export async function salvarServico(s: ServicoSolicitante): Promise<void> {
 
 // NOTIFICAÇÕES
 export async function registrarNotificacao(notif: NotificacaoEmail): Promise<void> {
-  const database = await getDb();
+  const turso = getTursoClient();
+  if (turso) {
+    await turso.execute({
+      sql: 'INSERT INTO notificacoes (id, requisicao_id, referencia_documento, destinatario_email, destinatario_nome, servico_nome, assunto, mensagem_html, status_referente, enviado_em, estado_envio) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      args: [
+        notif.id,
+        notif.requisicaoId,
+        notif.referenciaDocumento,
+        notif.destinatarioEmail,
+        notif.destinatarioNome,
+        notif.servicoNome,
+        notif.assunto,
+        notif.mensagemHtml,
+        notif.statusReferente,
+        notif.enviadoEm,
+        notif.estadoEnvio
+      ]
+    });
+    return;
+  }
+
+  const database = (await getDb())!;
   database.run(
     'INSERT INTO notificacoes (id, requisicao_id, referencia_documento, destinatario_email, destinatario_nome, servico_nome, assunto, mensagem_html, status_referente, enviado_em, estado_envio) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     [
@@ -756,7 +940,25 @@ export async function registrarNotificacao(notif: NotificacaoEmail): Promise<voi
 }
 
 export async function listarNotificacoes(): Promise<NotificacaoEmail[]> {
-  const database = await getDb();
+  const turso = getTursoClient();
+  if (turso) {
+    const res = await turso.execute('SELECT id, requisicao_id, referencia_documento, destinatario_email, destinatario_nome, servico_nome, assunto, mensagem_html, status_referente, enviado_em, estado_envio FROM notificacoes ORDER BY enviado_em DESC LIMIT 100');
+    return res.rows.map(row => ({
+      id: String(row.id),
+      requisicaoId: String(row.requisicao_id),
+      referenciaDocumento: String(row.referencia_documento),
+      destinatarioEmail: String(row.destinatario_email),
+      destinatarioNome: String(row.destinatario_nome),
+      servicoNome: String(row.servico_nome),
+      assunto: String(row.assunto),
+      mensagemHtml: String(row.mensagem_html),
+      statusReferente: String(row.status_referente) as StatusPedido,
+      enviadoEm: String(row.enviado_em),
+      estadoEnvio: String(row.estado_envio) as any
+    }));
+  }
+
+  const database = (await getDb())!;
   const res = database.exec('SELECT id, requisicao_id, referencia_documento, destinatario_email, destinatario_nome, servico_nome, assunto, mensagem_html, status_referente, enviado_em, estado_envio FROM notificacoes ORDER BY enviado_em DESC LIMIT 100');
   if (!res.length) return [];
   return res[0].values.map(row => ({
@@ -794,8 +996,30 @@ export interface SessaoOperador {
 }
 
 export async function obterOperadorPorEmail(email: string): Promise<Operador | null> {
-  const database = await getDb();
   const emailLimpo = email.trim().toLowerCase();
+  const turso = getTursoClient();
+  if (turso) {
+    const res = await turso.execute({
+      sql: `SELECT id, nome, email, cargo, numero_funcionario, ativo, criado_em 
+            FROM operadores 
+            WHERE LOWER(email) = ? OR (LOWER(email) = 'fsb@ua.pt' AND ? = 'filben@gmail.com')
+            LIMIT 1`,
+      args: [emailLimpo, emailLimpo]
+    });
+    if (!res.rows.length) return null;
+    const row = res.rows[0];
+    return {
+      id: String(row.id),
+      nome: String(row.nome),
+      email: String(row.email),
+      cargo: String(row.cargo),
+      numeroFuncionario: String(row.numero_funcionario),
+      ativo: Boolean(row.ativo),
+      criadoEm: String(row.criado_em)
+    };
+  }
+
+  const database = (await getDb())!;
   const stmt = database.prepare(`
     SELECT id, nome, email, cargo, numero_funcionario, ativo, criado_em 
     FROM operadores 
@@ -821,7 +1045,16 @@ export async function obterOperadorPorEmail(email: string): Promise<Operador | n
 }
 
 export async function salvarOtp(otp: RegistroOtp): Promise<void> {
-  const database = await getDb();
+  const turso = getTursoClient();
+  if (turso) {
+    await turso.execute({
+      sql: 'INSERT INTO otps (id, email, codigo, expira_em, utilizado, tentativas, criado_em) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      args: [otp.id, otp.email.toLowerCase(), otp.codigo, otp.expiraEm, otp.utilizado ? 1 : 0, otp.tentativas, otp.criadoEm]
+    });
+    return;
+  }
+
+  const database = (await getDb())!;
   database.run(
     'INSERT INTO otps (id, email, codigo, expira_em, utilizado, tentativas, criado_em) VALUES (?, ?, ?, ?, ?, ?, ?)',
     [otp.id, otp.email.toLowerCase(), otp.codigo, otp.expiraEm, otp.utilizado ? 1 : 0, otp.tentativas, otp.criadoEm]
@@ -830,9 +1063,29 @@ export async function salvarOtp(otp: RegistroOtp): Promise<void> {
 }
 
 export async function buscarUltimoOtpValido(email: string): Promise<RegistroOtp | null> {
-  const database = await getDb();
+  const emailLimpo = email.trim().toLowerCase();
+  const turso = getTursoClient();
+  if (turso) {
+    const res = await turso.execute({
+      sql: 'SELECT id, email, codigo, expira_em, utilizado, tentativas, criado_em FROM otps WHERE LOWER(email) = LOWER(?) AND utilizado = 0 ORDER BY criado_em DESC LIMIT 1',
+      args: [emailLimpo]
+    });
+    if (!res.rows.length) return null;
+    const row = res.rows[0];
+    return {
+      id: String(row.id),
+      email: String(row.email),
+      codigo: String(row.codigo),
+      expiraEm: String(row.expira_em),
+      utilizado: Boolean(row.utilizado),
+      tentativas: Number(row.tentativas),
+      criadoEm: String(row.criado_em)
+    };
+  }
+
+  const database = (await getDb())!;
   const stmt = database.prepare('SELECT id, email, codigo, expira_em, utilizado, tentativas, criado_em FROM otps WHERE LOWER(email) = LOWER(?) AND utilizado = 0 ORDER BY criado_em DESC LIMIT 1');
-  stmt.bind([email.trim().toLowerCase()]);
+  stmt.bind([emailLimpo]);
   if (stmt.step()) {
     const row = stmt.get();
     stmt.free();
@@ -851,13 +1104,26 @@ export async function buscarUltimoOtpValido(email: string): Promise<RegistroOtp 
 }
 
 export async function marcarOtpUtilizado(id: string): Promise<void> {
-  const database = await getDb();
+  const turso = getTursoClient();
+  if (turso) {
+    await turso.execute({ sql: 'UPDATE otps SET utilizado = 1 WHERE id = ?', args: [id] });
+    return;
+  }
+
+  const database = (await getDb())!;
   database.run('UPDATE otps SET utilizado = 1 WHERE id = ?', [id]);
   persistDb();
 }
 
 export async function incrementarTentativaOtp(id: string): Promise<number> {
-  const database = await getDb();
+  const turso = getTursoClient();
+  if (turso) {
+    await turso.execute({ sql: 'UPDATE otps SET tentativas = tentativas + 1 WHERE id = ?', args: [id] });
+    const res = await turso.execute({ sql: 'SELECT tentativas FROM otps WHERE id = ?', args: [id] });
+    return res.rows.length ? Number(res.rows[0].tentativas) : 1;
+  }
+
+  const database = (await getDb())!;
   database.run('UPDATE otps SET tentativas = tentativas + 1 WHERE id = ?', [id]);
   persistDb();
   const stmt = database.prepare('SELECT tentativas FROM otps WHERE id = ?');
@@ -871,7 +1137,16 @@ export async function incrementarTentativaOtp(id: string): Promise<number> {
 }
 
 export async function salvarSessao(sessao: SessaoOperador): Promise<void> {
-  const database = await getDb();
+  const turso = getTursoClient();
+  if (turso) {
+    await turso.execute({
+      sql: 'INSERT OR REPLACE INTO sessoes (token, operador_id, email, expira_em, criado_em) VALUES (?, ?, ?, ?, ?)',
+      args: [sessao.token, sessao.operadorId, sessao.email.toLowerCase(), sessao.expiraEm, sessao.criadoEm]
+    });
+    return;
+  }
+
+  const database = (await getDb())!;
   database.run(
     'INSERT OR REPLACE INTO sessoes (token, operador_id, email, expira_em, criado_em) VALUES (?, ?, ?, ?, ?)',
     [sessao.token, sessao.operadorId, sessao.email.toLowerCase(), sessao.expiraEm, sessao.criadoEm]
@@ -880,7 +1155,45 @@ export async function salvarSessao(sessao: SessaoOperador): Promise<void> {
 }
 
 export async function buscarSessao(token: string): Promise<{ sessao: SessaoOperador; operador: Operador } | null> {
-  const database = await getDb();
+  const turso = getTursoClient();
+  if (turso) {
+    const res = await turso.execute({
+      sql: `SELECT s.token, s.operador_id, s.email, s.expira_em, s.criado_em,
+                   o.id as op_id, o.nome, o.email as op_email, o.cargo, o.numero_funcionario, o.ativo, o.criado_em as op_criado_em
+            FROM sessoes s
+            JOIN operadores o ON s.operador_id = o.id
+            WHERE s.token = ?
+            LIMIT 1`,
+      args: [token]
+    });
+    if (!res.rows.length) return null;
+    const row = res.rows[0];
+    const expiraEm = String(row.expira_em);
+    if (new Date(expiraEm) < new Date()) {
+      await turso.execute({ sql: 'DELETE FROM sessoes WHERE token = ?', args: [token] });
+      return null;
+    }
+    return {
+      sessao: {
+        token: String(row.token),
+        operadorId: String(row.operador_id),
+        email: String(row.email),
+        expiraEm,
+        criadoEm: String(row.criado_em)
+      },
+      operador: {
+        id: String(row.op_id),
+        nome: String(row.nome),
+        email: String(row.op_email),
+        cargo: String(row.cargo),
+        numeroFuncionario: String(row.numero_funcionario),
+        ativo: Boolean(row.ativo),
+        criadoEm: String(row.op_criado_em)
+      }
+    };
+  }
+
+  const database = (await getDb())!;
   const stmt = database.prepare(`
     SELECT s.token, s.operador_id, s.email, s.expira_em, s.criado_em,
            o.id, o.nome, o.email, o.cargo, o.numero_funcionario, o.ativo, o.criado_em
@@ -895,7 +1208,6 @@ export async function buscarSessao(token: string): Promise<{ sessao: SessaoOpera
     stmt.free();
     const expiraEm = String(row[3]);
     if (new Date(expiraEm) < new Date()) {
-      // Sessão expirada
       database.run('DELETE FROM sessoes WHERE token = ?', [token]);
       persistDb();
       return null;
@@ -924,7 +1236,13 @@ export async function buscarSessao(token: string): Promise<{ sessao: SessaoOpera
 }
 
 export async function apagarSessao(token: string): Promise<void> {
-  const database = await getDb();
+  const turso = getTursoClient();
+  if (turso) {
+    await turso.execute({ sql: 'DELETE FROM sessoes WHERE token = ?', args: [token] });
+    return;
+  }
+
+  const database = (await getDb())!;
   database.run('DELETE FROM sessoes WHERE token = ?', [token]);
   persistDb();
 }

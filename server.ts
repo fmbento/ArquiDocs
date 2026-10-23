@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express, { Request, Response } from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -22,7 +23,8 @@ import {
   salvarSessao,
   buscarSessao,
   apagarSessao,
-  getDb
+  getDb,
+  isTursoActive
 } from './server/db.ts';
 import {
   enviarEmailOTP,
@@ -64,7 +66,16 @@ app.use((req, _res, next) => {
   next();
 });
 
-// API ROUTES - AUTENTICAÇÃO INDIVIDUAL POR OTP (SEM PASSWORD)
+// Estado da Base de Dados (Turso Cloud vs SQLite Local)
+app.get('/api/db/status', (_req: Request, res: Response) => {
+  const tursoAtivo = isTursoActive();
+  const url = (process.env.TURSO_DATABASE_URL || process.env.TURSO_URL || '').trim();
+  res.json({
+    provedor: tursoAtivo ? 'turso' : 'sqlite_local',
+    tursoAtivo,
+    tursoUrlMascarado: tursoAtivo ? url.replace(/:\/\/([^@]+@)?/, '://') : null
+  });
+});
 
 // 0. Estado da Configuração SMTP
 app.get('/api/auth/status', (_req: Request, res: Response) => {

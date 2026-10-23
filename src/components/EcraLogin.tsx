@@ -40,6 +40,7 @@ export const EcraLogin: React.FC<EcraLoginProps> = ({
   const [devCode, setDevCode] = useState<string | null>(null);
   const [nomeOperador, setNomeOperador] = useState<string>('');
   const [smtpStatus, setSmtpStatus] = useState<SmtpStatus | null>(null);
+  const [dbStatus, setDbStatus] = useState<{ provedor: string; tursoAtivo: boolean; tursoUrlMascarado?: string | null } | null>(null);
   const [tempoRestante, setTempoRestante] = useState<number>(600); // 10 minutos (600s)
 
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
@@ -48,6 +49,11 @@ export const EcraLogin: React.FC<EcraLoginProps> = ({
     fetch('/api/auth/status')
       .then(res => res.json())
       .then(data => setSmtpStatus(data))
+      .catch(() => {});
+
+    fetch('/api/db/status')
+      .then(res => res.json())
+      .then(data => setDbStatus(data))
       .catch(() => {});
   }, []);
 
@@ -251,19 +257,33 @@ export const EcraLogin: React.FC<EcraLoginProps> = ({
             </div>
           </div>
 
-          {/* Estado do Serviço SMTP */}
-          <div className="flex items-center justify-between px-3.5 py-2 rounded-lg bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800 text-xs">
-            <div className="flex items-center gap-2">
-              <span className={`w-2 h-2 rounded-full ${smtpStatus?.smtpConfigurado ? 'bg-[#92d400]' : 'bg-amber-400 animate-pulse'}`}></span>
-              <span className="text-slate-700 dark:text-slate-300 font-medium">
-                {smtpStatus?.smtpConfigurado 
-                  ? `Serviço SMTP Ativo (${smtpStatus.smtpHost})` 
-                  : 'Modo Demonstração (Código OTP visual e log)'}
+          {/* Estado dos Serviços: Base de Dados & SMTP */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+            <div className="flex items-center justify-between px-3.5 py-2 rounded-lg bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800">
+              <div className="flex items-center gap-2">
+                <span className={`w-2 h-2 rounded-full ${dbStatus?.tursoAtivo ? 'bg-emerald-500' : 'bg-amber-400'}`}></span>
+                <span className="text-slate-700 dark:text-slate-300 font-medium">
+                  {dbStatus?.tursoAtivo ? 'Turso Cloud (Ativo)' : 'SQLite Local (Memória)'}
+                </span>
+              </div>
+              <span className="text-[10px] text-slate-400 font-mono">
+                {dbStatus?.tursoAtivo ? 'libSQL' : 'sql.js'}
               </span>
             </div>
-            <span className="text-[11px] text-slate-400 dark:text-slate-500 font-mono">
-              Porta {smtpStatus?.smtpPort || 465}
-            </span>
+
+            <div className="flex items-center justify-between px-3.5 py-2 rounded-lg bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800">
+              <div className="flex items-center gap-2">
+                <span className={`w-2 h-2 rounded-full ${smtpStatus?.smtpConfigurado ? 'bg-[#92d400]' : 'bg-amber-400 animate-pulse'}`}></span>
+                <span className="text-slate-700 dark:text-slate-300 font-medium truncate max-w-[150px]">
+                  {smtpStatus?.smtpConfigurado 
+                    ? `SMTP (${smtpStatus.smtpHost})` 
+                    : 'Modo Demonstração'}
+                </span>
+              </div>
+              <span className="text-[10px] text-slate-400 font-mono">
+                P.{smtpStatus?.smtpPort || 465}
+              </span>
+            </div>
           </div>
 
           {/* Mensagens de Erro */}
