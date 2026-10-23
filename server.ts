@@ -85,6 +85,7 @@ app.get('/api/auth/status', (_req: Request, res: Response) => {
     smtpHost: config.host,
     smtpPort: config.port,
     smtpFrom: config.from,
+    smtpCc: config.cc,
     smtpUserMasked: config.user ? config.user.replace(/(.{2})(.*)(@.*)/, '$1***$3') : null
   });
 });

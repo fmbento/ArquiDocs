@@ -8,6 +8,8 @@ export function getSmtpConfig() {
   const pass = process.env.SMTP_PASS || '';
   const defaultFrom = user ? `"Arquivo Central SBIDM UA" <${user}>` : '"Arquivo Central SBIDM UA" <arquivo@ua.pt>';
   const from = process.env.SMTP_FROM || defaultFrom;
+  // CC institucional obrigatório para todas as mensagens (configurável via .env, padrão arquivo@ua.pt)
+  const cc = (process.env.SMTP_CC || process.env.ARQUIVO_EMAIL_CC || 'arquivo@ua.pt').trim();
 
   const isConfigured = Boolean(user && pass);
 
@@ -17,6 +19,7 @@ export function getSmtpConfig() {
     user,
     pass,
     from,
+    cc,
     isConfigured
   };
 }
@@ -144,15 +147,16 @@ export async function enviarEmailOTP(
     const info = await transporter.sendMail({
       from: config.from,
       to: destinatario,
+      cc: config.cc,
       subject: `[Arquivo Central UA] Código de Acesso OTP: ${codigoOtp}`,
       text: `Olá ${nomeOperador},\n\nO seu código de verificação temporário para aceder ao Arquivo Central (SBIDM - UA) é: ${codigoOtp}\n\nEste código expira em 10 minutos.\n\nUniversidade de Aveiro • SBIDM`,
       html
     });
 
-    console.log(`[AUTENTICAÇÃO OTP] E-mail enviado com sucesso para ${destinatario}. MessageId: ${info.messageId}`);
+    console.log(`[AUTENTICAÇÃO OTP] E-mail enviado com sucesso para ${destinatario} (CC: ${config.cc}). MessageId: ${info.messageId}`);
     return { enviado: true, modoDemo: false };
   } catch (err: any) {
-    console.error(`[AUTENTICAÇÃO OTP - ERRO] Falha ao enviar e-mail para ${destinatario}:`, err.message);
+    console.error(`[AUTENTICAÇÃO OTP - ERRO] Falha ao enviar e-mail para ${destinatario} (CC: ${config.cc}):`, err.message);
     return {
       enviado: false,
       modoDemo: false,
@@ -179,9 +183,11 @@ export async function enviarEmailNotificacao(
     await transporter.sendMail({
       from: config.from,
       to: destinatario,
+      cc: config.cc,
       subject: assunto,
       html
     });
+    console.log(`[NOTIFICACAO EMAIL] E-mail enviado para ${destinatario} (CC: ${config.cc}). Assunto: ${assunto}`);
     return true;
   } catch (err) {
     console.warn('[NOTIFICACAO EMAIL] Falha no envio SMTP:', err);

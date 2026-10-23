@@ -1,14 +1,14 @@
 # ArquiDocs - Gestão e Rastreamento de Processos
 
 [![Universidade de Aveiro](https://img.shields.io/badge/Universidade_de_Aveiro-Arquivo_Central-92d400.svg)](https://www.ua.pt)
-[![Versão](https://img.shields.io/badge/versão-1.2-0284c7.svg)](#-changelog--registo-de-alterações)
+[![Versão](https://img.shields.io/badge/versão-1.3-0284c7.svg)](#-changelog--registo-de-alterações)
 [![Base de Dados](https://img.shields.io/badge/base_de_dados-SQLite%20%7C%20Turso-4ade80.svg)](#-alojamento-na-cloud-com-turso-libsql--vercel)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178c6.svg)](https://www.typescriptlang.org/)
 [![React](https://img.shields.io/badge/React-19-61dafb.svg)](https://react.dev/)
 [![Express](https://img.shields.io/badge/Express-4.x-000000.svg)](https://expressjs.com/)
 [![TailwindCSS](https://img.shields.io/badge/TailwindCSS-v4-38bdf8.svg)](https://tailwindcss.com/)
 
-> **Versão / Version:** `1.2`  
+> **Versão / Version:** `1.3`  
 > **Language / Idioma:** English | [Português](#versão-em-português) | [Changelog](#-changelog--registo-de-alterações)
 
 <img alt="image" src="https://github.com/fmbento/ArquiDocs/blob/main/.aistudio/artifacts/brain/5c9bf9ea-6912-4fe2-aa9c-913b6fac100a/.tempmediaStorage/media_1792516723437_3f2d4882.png?raw=true" />
@@ -180,6 +180,8 @@ SMTP_PORT=465
 SMTP_USER=your-email@gmail.com
 SMTP_PASS=your-app-password
 SMTP_FROM="SiReS Bibliotecas UA" <your-email@gmail.com>
+# Institutional CC recipient for all dispatched messages & OTP access codes
+SMTP_CC=arquivo@ua.pt
 ```
 
 > **Note on Gmail:** When using Gmail, `SMTP_PASS` must be a 16-character **Google App Password** generated at [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords) (requires 2-Step Verification enabled).
@@ -435,6 +437,8 @@ SMTP_PORT=465
 SMTP_USER=your-email@gmail.com
 SMTP_PASS=your-app-password
 SMTP_FROM="SiReS Bibliotecas UA" <your-email@gmail.com>
+# Endereço de email institucional a receber cópia (CC) de todos os emails e códigos OTP enviados
+SMTP_CC=arquivo@ua.pt
 ```
 
 > **Aviso para contas Gmail:** A variável `SMTP_PASS` deve ser uma **Palavra-passe de Aplicação de 16 caracteres** gerada em [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords) (exige autenticação em dois passos ativada na conta Google).
@@ -544,7 +548,19 @@ O **Turso** resolve esta limitação mantendo a tecnologia SQLite/libSQL na clou
 
 Todas as alterações notáveis neste projeto são registadas nesta secção seguindo a convenção de versionamento **`major.minor`**.
 
-#### 🚀 Versão / Version `1.2` *(Versão Atual / Current Release)*
+#### 🚀 Versão / Version `1.3` *(Versão Atual / Current Release)*
+- **Envio de Cópias de E-mail (CC) para o Arquivo Central**:
+  - Todas as mensagens de correio eletrónico expedidas pela plataforma passam a ser enviadas obrigatoriamente com cópia (**CC**) para o endereço institucional do Arquivo Central.
+  - Abrange tanto os códigos OTP numéricos de 6 dígitos para autenticação de operadores como os alertas automáticos e notificações de pedidos de requisição.
+  - O endereço de CC é configurável através da variável de ambiente `SMTP_CC` (com valor padrão `arquivo@ua.pt`).
+- **Suporte Nativo à Base de Dados Cloud Turso (`@libsql/client`)**:
+  - Integração da biblioteca oficial `@libsql/client` permitindo ligações diretas por HTTP/WebSocket à base de dados na cloud.
+  - Eliminação definitiva da dependência de WebAssembly local (`sql-wasm.wasm`), resolvendo a 100% o erro de empacotamento em ambientes serverless como a Vercel.
+  - Indicador de estado em tempo real no ecrã de autenticação (Turso Cloud vs SQLite Local).
+
+---
+
+#### 📦 Versão / Version `1.2`
 - **Suporte a Base de Dados Cloud Turso (libSQL / SQLite)**:
   - Adicionado suporte a arquitetura *serverless* na cloud (Vercel, Netlify, Cloudflare) recorrendo ao **Turso**.
   - Criado o ficheiro de esquema integral [`data/schema-turso.sql`](./data/schema-turso.sql) com a estrutura DDL completa das 6 tabelas, índices e dados iniciais.

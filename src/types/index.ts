@@ -125,6 +125,7 @@ export interface SmtpStatus {
   smtpHost: string;
   smtpPort: number;
   smtpFrom: string;
+  smtpCc?: string;
   smtpUserMasked: string | null;
 }
 
