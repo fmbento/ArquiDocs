@@ -37,6 +37,7 @@ export const EcraLogin: React.FC<EcraLoginProps> = ({
   const [carregando, setCarregando] = useState<boolean>(false);
   const [erro, setErro] = useState<string | null>(null);
   const [mensagemSucesso, setMensagemSucesso] = useState<string | null>(null);
+  const [motivoFallback, setMotivoFallback] = useState<string | null>(null);
   const [devCode, setDevCode] = useState<string | null>(null);
   const [nomeOperador, setNomeOperador] = useState<string>('');
   const [smtpStatus, setSmtpStatus] = useState<SmtpStatus | null>(null);
@@ -102,6 +103,7 @@ export const EcraLogin: React.FC<EcraLoginProps> = ({
       setNomeOperador(dados.nomeOperador || 'Operador');
       setDevCode(dados.devCode || null);
       setMensagemSucesso(dados.mensagem);
+      setMotivoFallback(dados.motivoFallback || null);
       setPasso('codigo');
       setCodigoOtp(['', '', '', '', '', '']);
       setTempoRestante(600);
@@ -275,16 +277,35 @@ export const EcraLogin: React.FC<EcraLoginProps> = ({
               <div className="flex items-center gap-2">
                 <span className={`w-2 h-2 rounded-full ${smtpStatus?.smtpConfigurado ? 'bg-[#92d400]' : 'bg-amber-400 animate-pulse'}`}></span>
                 <span className="text-slate-700 dark:text-slate-300 font-medium truncate max-w-[150px]">
-                  {smtpStatus?.smtpConfigurado 
-                    ? `SMTP (${smtpStatus.smtpHost})` 
-                    : 'Modo Demonstração'}
+                  {smtpStatus?.provedor === 'brevo'
+                    ? (smtpStatus?.temFallbackSmtp ? 'Brevo (c/ SMTP)' : 'Brevo API (Ativo)')
+                    : smtpStatus?.provedor === 'resend'
+                      ? (smtpStatus?.temFallbackSmtp ? 'Resend (c/ SMTP)' : 'Resend (Ativo)')
+                      : smtpStatus?.smtpConfigurado 
+                        ? `SMTP (${smtpStatus.smtpHost})` 
+                        : 'Modo Demonstração'}
                 </span>
               </div>
               <span className="text-[10px] text-slate-400 font-mono">
-                P.{smtpStatus?.smtpPort || 465}
+                {smtpStatus?.provedor === 'brevo'
+                  ? (smtpStatus?.temFallbackSmtp ? 'Brevo+SMTP' : 'Brevo API')
+                  : smtpStatus?.provedor === 'resend'
+                    ? (smtpStatus?.temFallbackSmtp ? 'API+SMTP' : 'API')
+                    : `P.${smtpStatus?.smtpPort || 465}`}
               </span>
             </div>
           </div>
+
+          {/* CC Institucional para Notificações de Processos */}
+          {smtpStatus?.smtpCc && (
+            <div className="flex items-center justify-between px-3.5 py-2 rounded-lg bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-800 text-[11px] text-slate-600 dark:text-slate-300">
+              <span className="flex items-center gap-1.5">
+                <Mail className="w-3.5 h-3.5 text-[#92d400]" />
+                <span>Cópia institucional em notificações (CC):</span>
+              </span>
+              <span className="font-mono font-bold text-slate-800 dark:text-slate-200">{smtpStatus.smtpCc}</span>
+            </div>
+          )}
 
           {/* Mensagens de Erro */}
           {erro && (
@@ -313,7 +334,7 @@ export const EcraLogin: React.FC<EcraLoginProps> = ({
                   />
                 </div>
                 <p className="mt-1.5 text-[11px] text-slate-500 dark:text-slate-400">
-                  Sem necessidade de palavra-passe. Receberá um código numérico de 6 dígitos (OTP) de uso único.
+                  Sem necessidade de palavra-passe. Receberá um código de uso único (OTP) estritamente individual.
                 </p>
               </div>
 
@@ -381,6 +402,21 @@ export const EcraLogin: React.FC<EcraLoginProps> = ({
                 <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
                   Enviado para <strong>{email}</strong> ({nomeOperador})
                 </p>
+                {mensagemSucesso && !devCode && (
+                  <div className="mt-3 p-2.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200 text-xs flex items-center justify-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                    <span>{mensagemSucesso}</span>
+                  </div>
+                )}
+                {motivoFallback && (
+                  <div className="mt-2.5 p-3 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-amber-900 dark:text-amber-200 text-[11px] text-left flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                    <div>
+                      <strong className="font-semibold block mb-0.5">Informação sobre o Provedor:</strong>
+                      <span>{motivoFallback}</span>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Destaque em Modo Demonstração (Sem SMTP ativo) */}

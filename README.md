@@ -174,19 +174,22 @@ cp .env.example .env
 Configure your email delivery settings (same mechanism implemented in [Reserva-de-Salas-de-Estudo](https://github.com/fmbento/Reserva-de-Salas-de-Estudo)):
 
 ```env
-# Email (SMTP)
+# OPÇÃO A: Resend (Recomendado - sem problemas de spam ou senhas Google)
+RESEND_API_KEY=re_123456789_abcdef
+RESEND_FROM="Arquivo Central SBIDM UA" <onboarding@resend.dev>
+
+# OPÇÃO B: SMTP Clássico (ex: Brevo, Gmail ou UA)
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=465
-SMTP_USER=your-email@gmail.com
-SMTP_PASS=your-app-password
-SMTP_FROM="SiReS Bibliotecas UA" <your-email@gmail.com>
+SMTP_USER=arquivo.SBIDMUA.noreply@gmail.com
+SMTP_PASS=your-16-char-app-password
+SMTP_FROM="Arquivo Central SBIDM UA" <arquivo.SBIDMUA.noreply@gmail.com>
+
 # Institutional CC recipient for all dispatched messages & OTP access codes
 SMTP_CC=arquivo@ua.pt
 ```
 
-> **Note on Gmail:** When using Gmail, `SMTP_PASS` must be a 16-character **Google App Password** generated at [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords) (requires 2-Step Verification enabled).
->
-> **Development / Demo Mode:** If `SMTP_USER` and `SMTP_PASS` are left empty, the application automatically operates in **Demonstration Mode**. In this mode, generated OTP codes are shown on-screen and logged to the server terminal, allowing immediate testing without requiring an active SMTP account.
+> **Development / Demo Mode:** If neither `RESEND_API_KEY` nor `SMTP_USER`/`SMTP_PASS` are defined, the application automatically operates in **Demonstration Mode**. In this mode, generated OTP codes are shown on-screen and logged to the server terminal, allowing immediate testing without requiring an active mail service.
 
 #### 3. Running in Development Mode
 Starts the Express server with Vite middleware integrated on port `3000`:
@@ -431,19 +434,37 @@ cp .env.example .env
 Defina as credenciais para envio de correio eletrónico (compatível com a configuração do [Reserva-de-Salas-de-Estudo](https://github.com/fmbento/Reserva-de-Salas-de-Estudo)):
 
 ```env
-# Email (SMTP)
+# OPÇÃO A: Brevo / Sendinblue (Recomendado - 300 e-mails/dia grátis sem restrição de destinatários)
+# Obtenha a sua chave de API em: https://app.brevo.com/settings/keys/api
+BREVO_API_KEY=xkeysib-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+BREVO_FROM="Arquivo Central SBIDM UA" <arquivo.SBIDMUA.noreply@gmail.com>
+
+# OPÇÃO B: Resend (3.000 emails/mês grátis, requer validação de domínio para terceiros)
+RESEND_API_KEY=re_123456789_abcdef
+RESEND_FROM="Arquivo Central SBIDM UA" <onboarding@resend.dev>
+
+# OPÇÃO C: SMTP Clássico (ex: Gmail com App Password, Brevo SMTP Relay ou UA)
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=465
-SMTP_USER=your-email@gmail.com
-SMTP_PASS=your-app-password
-SMTP_FROM="SiReS Bibliotecas UA" <your-email@gmail.com>
-# Endereço de email institucional a receber cópia (CC) de todos os emails e códigos OTP enviados
+SMTP_USER=just4subsc@gmail.com
+SMTP_PASS=your-16-char-app-password
+SMTP_FROM="Arquivo Central SBIDM UA" <just4subsc@gmail.com>
+
+# Endereço institucional a receber cópia (CC) de notificações operacionais (os códigos OTP são estritamente individuais)
 SMTP_CC=arquivo@ua.pt
 ```
 
-> **Aviso para contas Gmail:** A variável `SMTP_PASS` deve ser uma **Palavra-passe de Aplicação de 16 caracteres** gerada em [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords) (exige autenticação em dois passos ativada na conta Google).
+> **Como configurar o Brevo (Passo a Passo):**
+> 1. Crie uma conta gratuita em [brevo.com](https://www.brevo.com/) (300 e-mails transacionais gratuitos por dia).
+> 2. Aceda a **Definições da Conta > SMTP & API > Chaves de API (API Keys)**.
+> 3. Clique em **Gerar uma nova chave de API** (obterá uma chave que começa por `xkeysib-...`).
+> 4. Em **Remetentes e IPs (Senders & IP)** no Brevo, adicione o remetente pretendido (ex.: `arquivo.SBIDMUA.noreply@gmail.com` ou o email da UA) e valide o e-mail através do link recebido.
+> 5. Defina `BREVO_API_KEY=xkeysib-...` e `BREVO_FROM="Arquivo Central SBIDM UA" <seu-remetente-validado>` nas variáveis de ambiente.
 >
-> **Modo Demonstração:** Sem credenciais SMTP no ficheiro `.env`, a aplicação ativa automaticamente o modo de demonstração: o código OTP gerado é impresso na consola e colocado em destaque no ecrã para preenchimento imediato.
+> **Mecanismo de Contingência Multi-Provedor (Multi-Engine Fallback):**
+> O ArquiDocs prioriza o Brevo. Caso a chave ainda não tenha sido definida ou o serviço atinja quotas/erros, o sistema tenta o Resend e, de seguida, comuta automaticamente para o Gmail SMTP de contingência já parametrizado, garantindo 100% de disponibilidade dos códigos OTP e notificações institucionais.
+>
+> **Modo Demonstração:** Sem credenciais de e-mail ativas no ambiente, a aplicação ativa automaticamente o modo de demonstração: o código OTP gerado é impresso na consola e colocado em destaque no ecrã para preenchimento imediato.
 
 #### 3. Iniciar em Modo de Desenvolvimento
 Inicia o servidor Express integrado com o Vite na porta `3000`:

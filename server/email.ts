@@ -1,43 +1,142 @@
 import nodemailer, { type Transporter } from 'nodemailer';
+import { Resend } from 'resend';
 
-// Leitura das configurações SMTP (compatível com SiReS Bibliotecas UA / Reserva-de-Salas-de-Estudo)
-export function getSmtpConfig() {
-  const host = process.env.SMTP_HOST || 'smtp.gmail.com';
-  const port = parseInt(process.env.SMTP_PORT || '465', 10);
-  const user = process.env.SMTP_USER || '';
-  const pass = process.env.SMTP_PASS || '';
-  const defaultFrom = user ? `"Arquivo Central SBIDM UA" <${user}>` : '"Arquivo Central SBIDM UA" <arquivo@ua.pt>';
-  const from = process.env.SMTP_FROM || defaultFrom;
-  // CC institucional obrigatório para todas as mensagens (configurável via .env, padrão arquivo@ua.pt)
+let resendInstance: Resend | null = null;
+let transporterInstance: Transporter | null = null;
+let brevoTransporterInstance: Transporter | null = null;
+
+// Extrai nome e email a partir de strings como '"Arquivo Central" <email@ua.pt>' ou 'email@ua.pt'
+export function parseEmailAndName(fromStr: string, fallbackEmail: string) {
+  const match = fromStr.match(/^(?:"?([^"]*)"?\s)?<?([^>]+)>?$/);
+  if (match) {
+    const name = match[1]?.trim() || 'Arquivo Central SBIDM UA';
+    const email = match[2]?.trim() || fallbackEmail;
+    return { name, email };
+  }
+  return { name: 'Arquivo Central SBIDM UA', email: fromStr || fallbackEmail };
+}
+
+// Leitura e normalização das configurações de e-mail (Brevo API/SMTP, Resend API e Nodemailer SMTP)
+export function getEmailConfig() {
+  // 1. Brevo (Chave de API REST xkeysib-... ou Palavra-passe SMTP xsmtpsib-...)
+  const brevoApiKey = (process.env.BREVO_API_KEY || process.env.SENDINBLUE_API_KEY || '').trim();
+  const brevoUser = (process.env.BREVO_USER || process.env.SENDINBLUE_USER || '').trim();
+  const isBrevoSmtpKey = brevoApiKey.startsWith('xsmtpsib-');
+  const isBrevoApiKey = brevoApiKey.startsWith('xkeysib-') || (!isBrevoSmtpKey && Boolean(brevoApiKey));
+  const isBrevo = Boolean(brevoApiKey);
+
+  // 2. Resend
+  const resendApiKey = (process.env.RESEND_API_KEY || '').trim();
+  const isResend = Boolean(resendApiKey);
+
+  // 3. SMTP Clássico (Gmail, Brevo SMTP Relay ou Universidade de Aveiro)
+  const smtpUser = (process.env.SMTP_USER || '').trim();
+  const smtpPass = (process.env.SMTP_PASS || '').trim();
+  const hasSmtp = Boolean(smtpUser && smtpPass);
+  const smtpHost = (process.env.SMTP_HOST || 'smtp.gmail.com').trim();
+  const smtpPort = parseInt(process.env.SMTP_PORT || '465', 10);
+
+  // CC institucional obrigatório para todas as mensagens (padrão arquivo@ua.pt)
   const cc = (process.env.SMTP_CC || process.env.ARQUIVO_EMAIL_CC || 'arquivo@ua.pt').trim();
 
-  const isConfigured = Boolean(user && pass);
+  // Remetentes padrão
+  const defaultBrevoFrom = smtpUser 
+    ? `"Arquivo Central SBIDM UA" <${smtpUser}>` 
+    : '"Arquivo Central SBIDM UA" <arquivo.SBIDMUA.noreply@gmail.com>';
+  const defaultResendFrom = '"Arquivo Central SBIDM UA" <onboarding@resend.dev>';
+  const defaultSmtpFrom = smtpUser 
+    ? `"Arquivo Central SBIDM UA" <${smtpUser}>` 
+    : '"Arquivo Central SBIDM UA" <arquivo@ua.pt>';
+
+  const brevoFrom = (process.env.BREVO_FROM || defaultBrevoFrom).trim();
+  const resendFrom = (process.env.RESEND_FROM || defaultResendFrom).trim();
+  const smtpFrom = (process.env.SMTP_FROM || defaultSmtpFrom).trim();
+
+  const isConfigured = Boolean(isBrevo || isResend || hasSmtp);
+
+  // Provedor ativo preferencial
+  let provedorAtivo: 'brevo' | 'resend' | 'smtp' | 'demo' = 'demo';
+  if (isBrevo) {
+    provedorAtivo = 'brevo';
+  } else if (isResend) {
+    provedorAtivo = 'resend';
+  } else if (hasSmtp) {
+    provedorAtivo = 'smtp';
+  }
+
+  let host = smtpHost;
+  let port = smtpPort;
+  let from = smtpFrom;
+  let user = smtpUser;
+
+  if (isBrevo) {
+    host = isBrevoSmtpKey ? 'smtp-relay.brevo.com' : 'api.brevo.com';
+    port = isBrevoSmtpKey ? 587 : 443;
+    from = brevoFrom;
+    user = brevoUser || 'brevo';
+  } else if (isResend) {
+    host = 'api.resend.com';
+    port = 443;
+    from = resendFrom;
+    user = 'resend';
+  }
 
   return {
+    isConfigured,
+    provedorAtivo,
+    // Brevo
+    isBrevo,
+    isBrevoSmtpKey,
+    isBrevoApiKey,
+    brevoApiKey,
+    brevoUser,
+    brevoFrom,
+    // Resend
+    isResend,
+    resendApiKey,
+    resendFrom,
+    // SMTP (Gmail, Brevo SMTP relay ou UA)
+    hasSmtp,
+    smtpUser,
+    smtpPass,
+    smtpHost,
+    smtpPort,
+    smtpFrom,
+    // CC Institucional (arquivo@ua.pt)
+    cc,
+    // Exibição amigável
     host,
     port,
-    user,
-    pass,
     from,
-    cc,
-    isConfigured
+    user
   };
 }
 
-let transporterInstance: Transporter | null = null;
+export function getSmtpConfig() {
+  return getEmailConfig();
+}
+
+function getResendClient(): Resend | null {
+  const config = getEmailConfig();
+  if (!config.isResend) return null;
+  if (!resendInstance) {
+    resendInstance = new Resend(config.resendApiKey);
+  }
+  return resendInstance;
+}
 
 function getTransporter(): Transporter | null {
-  const config = getSmtpConfig();
-  if (!config.isConfigured) return null;
+  const config = getEmailConfig();
+  if (!config.hasSmtp) return null;
 
   if (!transporterInstance) {
     transporterInstance = nodemailer.createTransport({
-      host: config.host,
-      port: config.port,
-      secure: config.port === 465, // true para SSL 465, false para 587 STARTTLS
+      host: config.smtpHost,
+      port: config.smtpPort,
+      secure: config.smtpPort === 465, // true para SSL 465, false para 587 STARTTLS
       auth: {
-        user: config.user,
-        pass: config.pass
+        user: config.smtpUser,
+        pass: config.smtpPass
       },
       tls: {
         rejectUnauthorized: false
@@ -48,28 +147,55 @@ function getTransporter(): Transporter | null {
   return transporterInstance;
 }
 
+function getBrevoTransporter(): Transporter | null {
+  const config = getEmailConfig();
+  if (!config.isBrevo || !config.brevoUser) return null;
+
+  if (!brevoTransporterInstance) {
+    brevoTransporterInstance = nodemailer.createTransport({
+      host: 'smtp-relay.brevo.com',
+      port: 587,
+      secure: false, // STARTTLS no porto 587
+      auth: {
+        user: config.brevoUser,
+        pass: config.brevoApiKey
+      },
+      tls: {
+        rejectUnauthorized: false
+      }
+    });
+  }
+
+  return brevoTransporterInstance;
+}
+
 /**
- * Envia e-mail com código OTP de 6 dígitos para login individual de operador
+ * Envia e-mail com código OTP de 6 dígitos para login individual de operador.
+ * Ordem de prioridade inteligente:
+ * 1. Brevo (REST API se xkeysib-... ou SMTP Relay se xsmtpsib-... com BREVO_USER)
+ * 2. Resend API
+ * 3. Gmail SMTP de contingência automática (fallback)
  */
 export async function enviarEmailOTP(
   destinatario: string,
   nomeOperador: string,
   codigoOtp: string
-): Promise<{ enviado: boolean; erro?: string; modoDemo: boolean }> {
-  const config = getSmtpConfig();
+): Promise<{ 
+  enviado: boolean; 
+  erro?: string; 
+  modoDemo: boolean; 
+  provedorUtilizado?: string;
+  motivoFallback?: string;
+}> {
+  const config = getEmailConfig();
 
   if (!config.isConfigured) {
-    console.log(`[AUTENTICAÇÃO OTP - DEMO] SMTP não configurado. Código OTP para ${destinatario} (${nomeOperador}): ${codigoOtp}`);
+    console.log(`[AUTENTICAÇÃO OTP - DEMO] E-mail não configurado. Código OTP para ${destinatario} (${nomeOperador}): ${codigoOtp}`);
     return {
       enviado: false,
       modoDemo: true,
-      erro: 'Serviço SMTP não configurado no servidor. Utilize o código de demonstração apresentado.'
+      erro: 'Nenhum serviço de e-mail configurado. Utilize o código de demonstração apresentado.'
     };
-  }
-
-  const transporter = getTransporter();
-  if (!transporter) {
-    return { enviado: false, modoDemo: true, erro: 'Falha ao inicializar transporte SMTP' };
   }
 
   const html = `
@@ -143,54 +269,264 @@ export async function enviarEmailOTP(
 </html>
   `;
 
-  try {
-    const info = await transporter.sendMail({
-      from: config.from,
-      to: destinatario,
-      cc: config.cc,
-      subject: `[Arquivo Central UA] Código de Acesso OTP: ${codigoOtp}`,
-      text: `Olá ${nomeOperador},\n\nO seu código de verificação temporário para aceder ao Arquivo Central (SBIDM - UA) é: ${codigoOtp}\n\nEste código expira em 10 minutos.\n\nUniversidade de Aveiro • SBIDM`,
-      html
-    });
+  const subject = `[Arquivo Central UA] Código de Acesso OTP: ${codigoOtp}`;
+  const text = `Olá ${nomeOperador},\n\nO seu código de verificação temporário para aceder ao Arquivo Central (SBIDM - UA) é: ${codigoOtp}\n\nEste código expira em 10 minutos.\n\nUniversidade de Aveiro • SBIDM`;
 
-    console.log(`[AUTENTICAÇÃO OTP] E-mail enviado com sucesso para ${destinatario} (CC: ${config.cc}). MessageId: ${info.messageId}`);
-    return { enviado: true, modoDemo: false };
-  } catch (err: any) {
-    console.error(`[AUTENTICAÇÃO OTP - ERRO] Falha ao enviar e-mail para ${destinatario} (CC: ${config.cc}):`, err.message);
-    return {
-      enviado: false,
-      modoDemo: false,
-      erro: `Erro SMTP ao enviar mensagem: ${err.message}`
-    };
+  let motivoFallback: string | undefined = undefined;
+
+  // 1. TENTATIVA COM BREVO (REST API OU SMTP RELAY)
+  if (config.isBrevo) {
+    // 1A. Brevo SMTP Relay (se a chave começar por xsmtpsib- e existir BREVO_USER)
+    if (config.isBrevoSmtpKey && config.brevoUser) {
+      const brevoTransporter = getBrevoTransporter();
+      if (brevoTransporter) {
+        try {
+          const info = await brevoTransporter.sendMail({
+            from: config.brevoFrom,
+            to: destinatario,
+            subject,
+            text,
+            html
+          });
+          console.log(`[AUTENTICAÇÃO OTP - BREVO SMTP SUCESSO] E-mail individual enviado para ${destinatario}. MessageId: ${info.messageId}`);
+          return { enviado: true, modoDemo: false, provedorUtilizado: 'Brevo SMTP Relay' };
+        } catch (err: any) {
+          console.warn(`[AUTENTICAÇÃO OTP - BREVO SMTP AVISO] Brevo SMTP falhou: ${err.message}`);
+          motivoFallback = `Brevo SMTP falhou (${err.message}).`;
+        }
+      }
+    } else if (config.isBrevoSmtpKey && !config.brevoUser) {
+      console.warn(`[AUTENTICAÇÃO OTP - BREVO AVISO] A chave BREVO_API_KEY inserida (${config.brevoApiKey.slice(0, 10)}...) é uma palavra-passe SMTP (xsmtpsib-...). Para utilizar este relay, defina também a variável BREVO_USER com o seu Login do Brevo. Em alternativa, no separador 'Chaves de API' (API Keys), gere uma chave REST API v3 (começa por xkeysib-...).`);
+      motivoFallback = `A chave Brevo inserida (xsmtpsib-...) é uma palavra-passe SMTP. Para envio direto por Brevo, defina a variável BREVO_USER com o Login do separador SMTP (ou gere uma chave de API v3 que começa por xkeysib-...).`;
+    }
+
+    // 1B. Brevo REST API v3 (se a chave for de API ou não for SMTP)
+    if (config.isBrevoApiKey) {
+      try {
+        const sender = parseEmailAndName(config.brevoFrom, 'arquivo.sbidmua.noreply@gmail.com');
+        const payload: any = {
+          sender: { name: sender.name, email: sender.email },
+          to: [{ email: destinatario, name: nomeOperador }],
+          subject,
+          htmlContent: html,
+          textContent: text
+        };
+
+        const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+          method: 'POST',
+          headers: {
+            'accept': 'application/json',
+            'api-key': config.brevoApiKey,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify(payload)
+        });
+
+        const resData: any = await response.json();
+
+        if (response.ok) {
+          console.log(`[AUTENTICAÇÃO OTP - BREVO API SUCESSO] E-mail individual enviado para ${destinatario}. MessageId: ${resData.messageId}`);
+          return { enviado: true, modoDemo: false, provedorUtilizado: 'Brevo API' };
+        } else {
+          console.warn(`[AUTENTICAÇÃO OTP - BREVO API AVISO] ${resData.message || resData.code}`);
+          motivoFallback = `Brevo API recusou (${resData.message || resData.code}).`;
+        }
+      } catch (err: any) {
+        console.warn(`[AUTENTICAÇÃO OTP - BREVO API ERRO] ${err.message}`);
+        motivoFallback = `Brevo API falhou (${err.message}).`;
+      }
+    }
+
+    if (config.hasSmtp) {
+      console.log(`[AUTENTICAÇÃO OTP - FALLBACK ATIVADO] A comutar para envio via SMTP de contingência (${config.smtpUser})...`);
+    } else if (!config.isResend) {
+      return {
+        enviado: false,
+        modoDemo: false,
+        erro: motivoFallback || 'Falha ao autenticar com o Brevo.'
+      };
+    }
   }
+
+  // 2. TENTATIVA COM RESEND SE ATIVO
+  if (config.isResend) {
+    const resend = getResendClient();
+    if (resend) {
+      try {
+        const response = await resend.emails.send({
+          from: config.resendFrom,
+          to: [destinatario],
+          subject,
+          text,
+          html
+        });
+
+        if (response.error) {
+          throw new Error(response.error.message);
+        }
+
+        console.log(`[AUTENTICAÇÃO OTP - RESEND SUCESSO] E-mail individual enviado para ${destinatario}. ID: ${response.data?.id}`);
+        return { enviado: true, modoDemo: false, provedorUtilizado: 'Resend API' };
+      } catch (err: any) {
+        console.warn(`[AUTENTICAÇÃO OTP - RESEND AVISO] Resend falhou (${err.message}).`);
+        if (!motivoFallback) {
+          motivoFallback = `Resend falhou (${err.message}).`;
+        }
+      }
+    }
+  }
+
+  // 3. ENVIO VIA NODEMAILER SMTP (DIRETO OU CONTINGÊNCIA/FALLBACK)
+  if (config.hasSmtp) {
+    const transporter = getTransporter();
+    if (transporter) {
+      try {
+        const info = await transporter.sendMail({
+          from: config.smtpFrom,
+          to: destinatario,
+          subject,
+          text,
+          html
+        });
+
+        console.log(`[AUTENTICAÇÃO OTP - SMTP SUCESSO] E-mail individual enviado para ${destinatario}. MessageId: ${info.messageId}`);
+        return { 
+          enviado: true, 
+          modoDemo: false, 
+          provedorUtilizado: config.isBrevo 
+            ? 'Gmail SMTP (Contingência Brevo)' 
+            : (config.isResend ? 'Gmail SMTP (Contingência Resend)' : 'Gmail SMTP'),
+          motivoFallback
+        };
+      } catch (err: any) {
+        console.error(`[AUTENTICAÇÃO OTP - SMTP ERRO] Falha ao enviar para ${destinatario}:`, err.message);
+        return {
+          enviado: false,
+          modoDemo: false,
+          erro: `Erro SMTP ao enviar mensagem: ${err.message}`
+        };
+      }
+    }
+  }
+
+  // 4. SE NENHUM SERVIÇO CONSEGUIU ENVIAR
+  return {
+    enviado: false,
+    modoDemo: true,
+    erro: 'Não foi possível expedir o e-mail por Brevo, Resend nem SMTP. Foi gerado um código de emergência na interface.'
+  };
 }
 
 /**
- * Envia notificação por e-mail referente a requisição se SMTP estiver ativo
+ * Envia notificação por e-mail referente a requisições/levantamentos.
+ * Suporta Brevo API / SMTP com fallback automático para Resend e Gmail SMTP.
  */
 export async function enviarEmailNotificacao(
   destinatario: string,
   assunto: string,
   html: string
 ): Promise<boolean> {
-  const config = getSmtpConfig();
+  const config = getEmailConfig();
   if (!config.isConfigured) return false;
 
-  const transporter = getTransporter();
-  if (!transporter) return false;
+  // 1. TENTATIVA VIA BREVO
+  if (config.isBrevo) {
+    // 1A. Brevo SMTP
+    if (config.isBrevoSmtpKey && config.brevoUser) {
+      const brevoTransporter = getBrevoTransporter();
+      if (brevoTransporter) {
+        try {
+          await brevoTransporter.sendMail({
+            from: config.brevoFrom,
+            to: destinatario,
+            cc: config.cc,
+            subject: assunto,
+            html
+          });
+          console.log(`[NOTIFICAÇÃO BREVO SMTP] E-mail enviado para ${destinatario} (CC: ${config.cc}). Assunto: ${assunto}`);
+          return true;
+        } catch (err: any) {
+          console.warn('[NOTIFICAÇÃO BREVO SMTP AVISO]:', err.message);
+        }
+      }
+    }
 
-  try {
-    await transporter.sendMail({
-      from: config.from,
-      to: destinatario,
-      cc: config.cc,
-      subject: assunto,
-      html
-    });
-    console.log(`[NOTIFICACAO EMAIL] E-mail enviado para ${destinatario} (CC: ${config.cc}). Assunto: ${assunto}`);
-    return true;
-  } catch (err) {
-    console.warn('[NOTIFICACAO EMAIL] Falha no envio SMTP:', err);
-    return false;
+    // 1B. Brevo REST API
+    if (config.isBrevoApiKey) {
+      try {
+        const sender = parseEmailAndName(config.brevoFrom, 'arquivo.sbidmua.noreply@gmail.com');
+        const payload: any = {
+          sender: { name: sender.name, email: sender.email },
+          to: [{ email: destinatario }],
+          subject: assunto,
+          htmlContent: html
+        };
+        if (config.cc) {
+          payload.cc = [{ email: config.cc, name: 'Arquivo Central SBIDM UA' }];
+        }
+
+        const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+          method: 'POST',
+          headers: {
+            'accept': 'application/json',
+            'api-key': config.brevoApiKey,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify(payload)
+        });
+
+        if (response.ok) {
+          console.log(`[NOTIFICAÇÃO BREVO API] E-mail enviado para ${destinatario} (CC: ${config.cc}). Assunto: ${assunto}`);
+          return true;
+        }
+      } catch (err: any) {
+        console.warn('[NOTIFICAÇÃO BREVO API ERRO]:', err.message);
+      }
+    }
   }
+
+  // 2. TENTATIVA VIA RESEND API
+  if (config.isResend) {
+    const resend = getResendClient();
+    if (resend) {
+      try {
+        const response = await resend.emails.send({
+          from: config.resendFrom,
+          to: [destinatario],
+          cc: config.cc ? [config.cc] : undefined,
+          subject: assunto,
+          html
+        });
+
+        if (!response.error) {
+          console.log(`[NOTIFICAÇÃO RESEND] E-mail enviado para ${destinatario} (CC: ${config.cc}). Assunto: ${assunto}`);
+          return true;
+        }
+      } catch (err: any) {
+        console.warn('[NOTIFICAÇÃO RESEND ERRO]:', err.message);
+      }
+    }
+  }
+
+  // 3. CONTINGÊNCIA / FALLBACK VIA SMTP
+  if (config.hasSmtp) {
+    const transporter = getTransporter();
+    if (transporter) {
+      try {
+        await transporter.sendMail({
+          from: config.smtpFrom,
+          to: destinatario,
+          cc: config.cc,
+          subject: assunto,
+          html
+        });
+        console.log(`[NOTIFICAÇÃO SMTP CONTINGÊNCIA] E-mail enviado para ${destinatario} (CC: ${config.cc}). Assunto: ${assunto}`);
+        return true;
+      } catch (err: any) {
+        console.warn('[NOTIFICAÇÃO SMTP ERRO]:', err.message);
+      }
+    }
+  }
+
+  return false;
 }

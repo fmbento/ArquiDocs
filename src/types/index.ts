@@ -122,6 +122,8 @@ export interface ResumoEstatisticas {
 
 export interface SmtpStatus {
   smtpConfigurado: boolean;
+  provedor?: 'brevo' | 'resend' | 'smtp' | 'demo';
+  temFallbackSmtp?: boolean;
   smtpHost: string;
   smtpPort: number;
   smtpFrom: string;
@@ -138,5 +140,7 @@ export interface RespostaAuth {
   devCode?: string;
   nomeOperador?: string;
   email?: string;
+  provedorUtilizado?: string;
+  motivoFallback?: string;
 }
 

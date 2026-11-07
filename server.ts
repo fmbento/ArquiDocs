@@ -77,16 +77,22 @@ app.get('/api/db/status', (_req: Request, res: Response) => {
   });
 });
 
-// 0. Estado da Configuração SMTP
+// 0. Estado da Configuração de E-mail (Brevo vs Resend vs SMTP)
 app.get('/api/auth/status', (_req: Request, res: Response) => {
   const config = getSmtpConfig();
   res.json({
     smtpConfigurado: config.isConfigured,
+    provedor: config.provedorAtivo,
+    temFallbackSmtp: Boolean((config.isBrevo || config.isResend) && config.hasSmtp),
     smtpHost: config.host,
     smtpPort: config.port,
     smtpFrom: config.from,
     smtpCc: config.cc,
-    smtpUserMasked: config.user ? config.user.replace(/(.{2})(.*)(@.*)/, '$1***$3') : null
+    smtpUserMasked: config.isBrevo
+      ? 'Brevo API Key (xkeysib-***)'
+      : config.isResend 
+        ? 'Resend API Key (re_***)'
+        : (config.smtpUser ? config.smtpUser.replace(/(.{2})(.*)(@.*)/, '$1***$3') : null)
   });
 });
 
@@ -129,14 +135,24 @@ app.post('/api/auth/solicitar-otp', async (req: Request, res: Response) => {
     });
 
     const envio = await enviarEmailOTP(emailLimpo, operador.nome, codigo);
+    const config = getSmtpConfig();
+
+    let mensagem = `Código OTP enviado com sucesso para ${emailLimpo}.`;
+    if (envio.modoDemo) {
+      mensagem = `Modo Demonstração: Código OTP gerado para ${operador.nome}.`;
+    } else if (envio.provedorUtilizado?.includes('Contingência')) {
+      mensagem = `Código OTP enviado para ${emailLimpo} via contingência Gmail SMTP.`;
+    } else {
+      mensagem = `Código OTP enviado com sucesso para ${emailLimpo}.`;
+    }
 
     res.json({
       sucesso: true,
-      mensagem: envio.modoDemo
-        ? `Modo Demonstração: Código OTP gerado para ${operador.nome}.`
-        : `Código OTP enviado com sucesso para ${emailLimpo}.`,
+      mensagem,
+      motivoFallback: envio.motivoFallback,
       modoDemo: envio.modoDemo,
       devCode: envio.modoDemo ? codigo : undefined,
+      provedorUtilizado: envio.provedorUtilizado,
       nomeOperador: operador.nome,
       email: emailLimpo
     });
